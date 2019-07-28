@@ -1759,9 +1759,6 @@ void w2xconv_convert_mat
 
 	//image_src->release();
 	
-	//std::cout << image;
-	
-	
 	// divide images in to 4^n pieces when output size is too big.
 	std::vector<cv::Mat> pieces;
 	
