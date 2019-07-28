@@ -1757,9 +1757,40 @@ void w2xconv_convert_mat
 		fmt = w2xc::IMAGE_Y;
 	}
 
-	image_src->release();
+	//image_src->release();
 	
-	int w2x_total_steps = 0;
+	//std::cout << image;
+	
+	
+	// divide images in to 4^n pieces when output size is too big.
+	std::vector<cv::Mat> pieces;
+	
+	slice_into_pieces(pieces, image, 10);
+	
+	for(int i=0; i<pieces.size(); i++)
+	{
+		printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
+		cv::dnn::Net net = cv::dnn::readNetFromCaffe("noise3_scale2.0x_model.prototxt", "noise3_scale2.0x_model.json.caffemodel");
+		net.setPreferableTarget(cv::dnn::DNN_TARGET_OPENCL);
+		
+		cv::copyMakeBorder(pieces[i], pieces[i], 7, 7, 7, 7, cv::BORDER_REPLICATE);
+		
+		cv::Mat blob = cv::dnn::blobFromImage(pieces[i]);
+		net.setInput(blob);
+		
+		cv::Mat newBlob = net.forward();
+		
+		cv::Mat res[3];
+		res[0] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 0));
+		res[1] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 1));
+		res[2] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 2));
+		
+		cv::merge(res, 3, pieces[i]);
+	}
+		
+	merge_slices(&image, pieces, 2);
+	
+/*	int w2x_total_steps = 0;
 	int w2x_current_step = 1;
 	int iterTimesTwiceScaling;
 	
@@ -1836,7 +1867,7 @@ void w2xconv_convert_mat
 				postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
 				
 				cv::imwrite(name, testout);*/
-			}
+/*			}
 
 			if (pieces.size() > 1 && conv->log_level >= 2)
 			{
@@ -1853,7 +1884,7 @@ void w2xconv_convert_mat
 			cv::resize(image, image, lastImageSize, 0, 0, cv::INTER_LINEAR);
 		}
 	}
-
+*/
 	if (alpha.empty() || !dst_alpha)
 	{
 		*image_dst = cv::Mat(image.size(), CV_MAKETYPE(src_depth,3));
