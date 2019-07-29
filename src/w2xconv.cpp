@@ -993,7 +993,7 @@ static void apply_scale_net
 			output = &imageSplit[0];
 		}
 
-		convert_image_net(impl->noise0_net, *input, *output);
+		convert_image_net(impl->scale2_net, *input, *output);
 
 		if (!IS_3CHANNEL(fmt))
 		{
