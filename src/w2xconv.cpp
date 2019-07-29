@@ -967,22 +967,19 @@ static void apply_scale_net
 		cv::Size imageSize = image.size();
 		imageSize.width *= 2;
 		imageSize.height *= 2;
-		cv::Mat image2xNearest;
 		cv::Mat imageY;
 		std::vector<cv::Mat> imageSplit;
 		cv::Mat image2xBicubic;
 		cv::Mat *input, *output;
 
-		cv::resize(image, image2xNearest, imageSize, 0, 0, cv::INTER_NEAREST);
-
 		if (IS_3CHANNEL(fmt))
 		{
-			input = &image2xNearest;
+			input = &image;
 			output = &image;
 		}
 		else
 		{
-			cv::split(image2xNearest, imageSplit);
+			cv::split(image, imageSplit);
 			imageSplit[0].copyTo(imageY);
 			// generate bicubic scaled image and
 			// convert RGB -> YUV and split
