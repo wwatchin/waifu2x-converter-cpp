@@ -705,6 +705,7 @@ int main(int argc, char** argv)
 		"Generate sub folder when recursive directory is enabled.\nSet 1 to enable this. (0 or 1)", false,
 		0, "bool", cmd);
 
+	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) upconv7 model support", cmd, false);
 
 	TCLAP::SwitchArg cmdQuiet("s", "silent", "Enable silent mode. (same as --log-level 1)", cmd, false);
 	
@@ -850,6 +851,10 @@ int main(int argc, char** argv)
 	{
 		log_level = 1;
 	}
+	else if(cmdUpconv.getValue())
+	{
+		log_level = 999;
+	}
 	else
 		log_level = cmdLogLevel.getValue();
 
@@ -946,6 +951,18 @@ int main(int argc, char** argv)
 
 	int error = w2xconv_load_models(converter, modelDir.c_str());
 	check_for_errors(converter, error);
+	
+	if(log_level == 999)
+	{
+		if(cmdForceOpenCL.getValue())
+		{
+			w2xconv_read_nets(converter, modelDir.c_str(), cv::dnn::DNN_TARGET_OPENCL);
+		}
+		else
+		{
+			w2xconv_read_nets(converter, modelDir.c_str(), cv::dnn::DNN_TARGET_CPU);
+		}
+	}
 
 	//This includes errored files.
 	int numFilesProcessed = 0;

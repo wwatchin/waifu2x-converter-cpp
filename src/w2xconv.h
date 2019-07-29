@@ -216,6 +216,7 @@ W2XCONV_EXPORT struct W2XConv *w2xconv_init(enum W2XConvGPUMode gpu, int njob /*
 W2XCONV_EXPORT struct W2XConv *w2xconv_init_with_processor(int processor_idx, int njob, int log_level);
 
 /* return negative if failed */
+W2XCONV_EXPORT int w2xconv_read_nets(struct W2XConv *conv, const W2XCONV_TCHAR *model_dir, const int target_id);
 W2XCONV_EXPORT int w2xconv_load_models(struct W2XConv *conv, const W2XCONV_TCHAR *model_dir);
 
 W2XCONV_EXPORT void w2xconv_set_model_3x3

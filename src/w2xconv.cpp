@@ -43,6 +43,12 @@ struct W2XConvImpl
 	std::vector<std::unique_ptr<w2xc::Model> > noise2_models;
 	std::vector<std::unique_ptr<w2xc::Model> > noise3_models;
 	std::vector<std::unique_ptr<w2xc::Model> > scale2_models;
+	
+	cv::dnn::Net noise0_net;
+	cv::dnn::Net noise1_net;
+	cv::dnn::Net noise2_net;
+	cv::dnn::Net noise3_net;
+	cv::dnn::Net scale2_net;
 };
 
 static std::vector<struct W2XConvProcessor> processor_list;
@@ -564,6 +570,51 @@ static void setError(W2XConv *conv, enum W2XConvErrorCode code)
 	conv->last_error.code = code;
 }
 
+int w2xconv_read_nets(W2XConv *conv, const TCHAR *model_dir, const int target_id)
+{
+	struct W2XConvImpl *impl = conv->impl;
+	
+	_tstring model_str(model_dir);
+	std::string modelFileName;
+	
+	modelFileName.assign(model_str.begin(), model_str.end());
+
+	impl->noise0_net = cv::dnn::readNetFromCaffe(modelFileName + ("/noise0_scale2.0x_model.prototxt"), modelFileName + ("/noise0_scale2.0x_model.caffemodel"));
+	impl->noise1_net = cv::dnn::readNetFromCaffe(modelFileName + ("/noise1_scale2.0x_model.prototxt"), modelFileName + ("/noise1_scale2.0x_model.caffemodel"));
+	impl->noise2_net = cv::dnn::readNetFromCaffe(modelFileName + ("/noise2_scale2.0x_model.prototxt"), modelFileName + ("/noise2_scale2.0x_model.caffemodel"));
+	impl->noise3_net = cv::dnn::readNetFromCaffe(modelFileName + ("/noise3_scale2.0x_model.prototxt"), modelFileName + ("/noise3_scale2.0x_model.caffemodel"));
+	impl->scale2_net = cv::dnn::readNetFromCaffe(modelFileName + ("/scale2.0x_model.prototxt"), modelFileName + ("/scale2.0x_model.caffemodel"));
+
+	if (impl->noise0_net.empty()) {
+		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, model_str + _T("/noise0_scale2.0x_model.prototxt") + _T(" and ") + model_str + _T("/noise0_scale2.0x_model.caffemodel"));
+		return -1;
+	}
+	if (impl->noise1_net.empty()) {
+		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, model_str + _T("/noise1_scale2.0x_model.prototxt") + _T(" and ") + model_str + _T("/noise1_scale2.0x_model.caffemodel"));
+		return -1;
+	}
+	if (impl->noise2_net.empty()) {
+		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, model_str + _T("/noise2_scale2.0x_model.prototxt") + _T(" and ") + model_str + _T("/noise2_scale2.0x_model.caffemodel"));
+		return -1;
+	}
+	if (impl->noise3_net.empty()) {
+		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, model_str + _T("/noise3_scale2.0x_model.prototxt") + _T(" and ") + model_str + _T("/noise3_scale2.0x_model.caffemodel"));
+		return -1;
+	}
+	if (impl->scale2_net.empty()) {
+		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, model_str + _T("/scale2.0x_model.prototxt") + _T(" and ") + model_str + _T("/scale2.0x_model.caffemodel"));
+		return -1;
+	}
+	
+	impl->noise0_net.setPreferableTarget(target_id);
+	impl->noise1_net.setPreferableTarget(target_id);
+	impl->noise2_net.setPreferableTarget(target_id);
+	impl->noise3_net.setPreferableTarget(target_id);
+	impl->scale2_net.setPreferableTarget(target_id);
+
+	return 0;
+}
+
 int w2xconv_load_models(W2XConv *conv, const TCHAR *model_dir)
 {
 	struct W2XConvImpl *impl = conv->impl;
@@ -606,7 +657,7 @@ int w2xconv_load_models(W2XConv *conv, const TCHAR *model_dir)
 		setPathError(conv, W2XCONV_ERROR_MODEL_LOAD_FAILED, modelFileName + _T("/scale2.0x_model.json"));
 		return -1;
 	}
-
+	
 	return 0;
 }
 
@@ -682,6 +733,27 @@ void w2xconv_fini(struct W2XConv *conv)
 }
 
 #ifdef HAVE_OPENCV
+static void convert_image_net(cv::dnn::Net& net, cv::Mat& input, cv::Mat& output){
+	int channel_src = input.channels();
+	cv::Mat border = input.clone();
+	cv::copyMakeBorder(border, border, 7, 7, 7, 7, cv::BORDER_REPLICATE);
+	cv::Mat blob = cv::dnn::blobFromImage(border);
+	net.setInput(blob);
+	
+	cv::Mat newBlob = net.forward();
+
+	std::vector<cv::Mat> res;
+
+	for (int i = 0; i < channel_src; i++) {
+		res.push_back(cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, i)));
+	}
+	cv::merge(res, output);
+	
+	std::vector<cv::Mat>().swap(res);
+	blob.release();
+	newBlob.release();
+}
+
 static void apply_denoise
 (
 	struct W2XConv *conv,
@@ -733,6 +805,65 @@ static void apply_denoise
 	}
 
 	output_2.to_cvmat(output);
+
+	if (! IS_3CHANNEL(fmt))
+	{
+		cv::merge(imageSplit, image);
+	}
+}
+
+static void apply_denoise_net
+(
+	struct W2XConv *conv,
+	cv::Mat &image,
+	int denoise_level,
+	int blockSize,
+	enum w2xc::image_format fmt
+)
+{
+	struct W2XConvImpl *impl = conv->impl;
+	ComputeEnv *env = &impl->env;
+
+	std::vector<cv::Mat> imageSplit;
+	cv::Mat *input;
+	cv::Mat *output;
+	cv::Mat imageY;
+	
+	cv::Size lastImageSize = image.size();
+
+	if (IS_3CHANNEL(fmt))
+	{
+		input = &image;
+		output = &image;
+	}
+	else
+	{
+		cv::split(image, imageSplit);
+		imageSplit[0].copyTo(imageY);
+		input = &imageY;
+		output = &imageSplit[0];
+	}
+
+	cv::Mat output_2;
+
+	if (denoise_level == 0)
+	{
+		convert_image_net(impl->noise0_net, *input, output_2);
+	}
+	else if (denoise_level == 1)
+	{
+		convert_image_net(impl->noise1_net, *input, output_2);
+	}
+	else if (denoise_level == 2)
+	{
+		convert_image_net(impl->noise2_net, *input, output_2);
+	}
+	else if (denoise_level == 3)
+	{
+		convert_image_net(impl->noise3_net, *input, output_2);
+	}
+	
+	cv::resize(output_2, *output, lastImageSize, 0, 0, cv::INTER_LINEAR);
 
 	if (! IS_3CHANNEL(fmt))
 	{
@@ -806,6 +937,63 @@ static void apply_scale
 		}
 
 		output_2.to_cvmat(output);
+
+		if (!IS_3CHANNEL(fmt))
+		{
+			cv::merge(imageSplit, image);
+		}
+	} // 2x scaling : end
+}
+
+static void apply_scale_net
+(
+	struct W2XConv *conv,
+	cv::Mat &image,
+	int iterTimesTwiceScaling,
+	int blockSize,
+	enum w2xc::image_format fmt
+)
+{
+	struct W2XConvImpl *impl = conv->impl;
+	ComputeEnv *env = &impl->env;
+
+	// 2x scaling
+	for (int nIteration = 0; nIteration < iterTimesTwiceScaling; nIteration++)
+	{
+		if (conv->log_level >= 3)
+		{
+			printf("2x Scaling:\n");
+		}
+		cv::Size imageSize = image.size();
+		imageSize.width *= 2;
+		imageSize.height *= 2;
+		cv::Mat image2xNearest;
+		cv::Mat imageY;
+		std::vector<cv::Mat> imageSplit;
+		cv::Mat image2xBicubic;
+		cv::Mat *input, *output;
+
+		cv::resize(image, image2xNearest, imageSize, 0, 0, cv::INTER_NEAREST);
+
+		if (IS_3CHANNEL(fmt))
+		{
+			input = &image2xNearest;
+			output = &image;
+		}
+		else
+		{
+			cv::split(image2xNearest, imageSplit);
+			imageSplit[0].copyTo(imageY);
+			// generate bicubic scaled image and
+			// convert RGB -> YUV and split
+			imageSplit.clear();
+			cv::resize(image,image2xBicubic,imageSize,0,0,cv::INTER_CUBIC);
+			cv::split(image2xBicubic, imageSplit);
+			input = &imageY;
+			output = &imageSplit[0];
+		}
+
+		convert_image_net(impl->noise0_net, *input, *output);
 
 		if (!IS_3CHANNEL(fmt))
 		{
@@ -1757,37 +1945,9 @@ void w2xconv_convert_mat
 		fmt = w2xc::IMAGE_Y;
 	}
 
-	//image_src->release();
+	image_src->release();
 	
-	// divide images in to 4^n pieces when output size is too big.
-	std::vector<cv::Mat> pieces;
-	
-	slice_into_pieces(pieces, image, 10);
-	
-	for(int i=0; i<pieces.size(); i++)
-	{
-		printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
-		cv::dnn::Net net = cv::dnn::readNetFromCaffe("noise3_scale2.0x_model.prototxt", "noise3_scale2.0x_model.json.caffemodel");
-		net.setPreferableTarget(cv::dnn::DNN_TARGET_OPENCL);
-		
-		cv::copyMakeBorder(pieces[i], pieces[i], 7, 7, 7, 7, cv::BORDER_REPLICATE);
-		
-		cv::Mat blob = cv::dnn::blobFromImage(pieces[i]);
-		net.setInput(blob);
-		
-		cv::Mat newBlob = net.forward();
-		
-		cv::Mat res[3];
-		res[0] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 0));
-		res[1] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 1));
-		res[2] = cv::Mat(newBlob.size[2], newBlob.size[3], CV_32FC1, newBlob.ptr<float>(0, 2));
-		
-		cv::merge(res, 3, pieces[i]);
-	}
-		
-	merge_slices(&image, pieces, 2);
-	
-/*	int w2x_total_steps = 0;
+	int w2x_total_steps = 0;
 	int w2x_current_step = 1;
 	int iterTimesTwiceScaling;
 	
@@ -1816,7 +1976,12 @@ void w2xconv_convert_mat
 				printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
 			}
 			
-			apply_denoise(conv, pieces[i], denoise_level, blockSize, fmt);
+			if(conv->log_level == 999){
+				apply_denoise_net(conv, pieces[i], denoise_level, blockSize, fmt);
+			}
+			else {
+				apply_denoise(conv, pieces[i], denoise_level, blockSize, fmt);
+			}
 		}
 		
 		if (pieces.size() > 1 && conv->log_level >= 2)
@@ -1855,7 +2020,12 @@ void w2xconv_convert_mat
 					printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
 				}
 				
-				apply_scale(conv, pieces[i], 1, blockSize, fmt);
+				if(conv->log_level == 999){
+					apply_scale_net(conv, pieces[i], 1, blockSize, fmt);
+				}
+				else {
+					apply_scale(conv, pieces[i], 1, blockSize, fmt);
+				}
 				
 				/*
 				sprintf(name, "[test] step%d_slice%d_converted.webp", ld, i);
@@ -1864,7 +2034,7 @@ void w2xconv_convert_mat
 				postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
 				
 				cv::imwrite(name, testout);*/
-/*			}
+			}
 
 			if (pieces.size() > 1 && conv->log_level >= 2)
 			{
@@ -1881,7 +2051,7 @@ void w2xconv_convert_mat
 			cv::resize(image, image, lastImageSize, 0, 0, cv::INTER_LINEAR);
 		}
 	}
-*/
+
 	if (alpha.empty() || !dst_alpha)
 	{
 		*image_dst = cv::Mat(image.size(), CV_MAKETYPE(src_depth,3));
