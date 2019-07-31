@@ -949,6 +949,7 @@ static void apply_scale_net
 (
 	struct W2XConv *conv,
 	cv::Mat &image,
+	int denoise_level,
 	int iterTimesTwiceScaling,
 	int blockSize,
 	enum w2xc::image_format fmt
@@ -989,8 +990,29 @@ static void apply_scale_net
 			input = &imageY;
 			output = &imageSplit[0];
 		}
-
-		convert_image_net(impl->scale2_net, *input, *output);
+		if (nIteration == 0)
+		{
+			if (denoise_level == 0)
+			{
+				convert_image_net(impl->noise0_net, *input, *output);
+			}
+			else if (denoise_level == 1)
+			{
+				convert_image_net(impl->noise1_net, *input, *output);
+			}
+			else if (denoise_level == 2)
+			{
+				convert_image_net(impl->noise2_net, *input, *output);
+			}
+			else if (denoise_level == 3)
+			{
+				convert_image_net(impl->noise3_net, *input, *output);
+			}
+			else
+				convert_image_net(impl->scale2_net, *input, *output);
+		}
+		else
+			convert_image_net(impl->scale2_net, *input, *output);
 
 		if (!IS_3CHANNEL(fmt))
 		{
@@ -1954,7 +1976,7 @@ void w2xconv_convert_mat
 		w2x_total_steps += iterTimesTwiceScaling;
 	}
 	
-	if (denoise_level != -1)
+	if (denoise_level != -1 && (conv->log_level != 999 || scale == 1.0))
 	{
 		// divide images in to 4^n pieces when output size is too big.
 		std::vector<cv::Mat> pieces;
@@ -1973,7 +1995,8 @@ void w2xconv_convert_mat
 				printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
 			}
 			
-			if(conv->log_level == 999){
+			if(conv->log_level == 999)
+			{
 				apply_denoise_net(conv, pieces[i], denoise_level, blockSize, fmt);
 			}
 			else {
@@ -2017,10 +2040,12 @@ void w2xconv_convert_mat
 					printf("Proccessing [%d/%zu] slices\n", i+1, pieces.size());
 				}
 				
-				if(conv->log_level == 999){
-					apply_scale_net(conv, pieces[i], 1, blockSize, fmt);
+				if(conv->log_level == 999)
+				{
+					apply_scale_net(conv, pieces[i], ld == 0 ? denoise_level : -1, 1, blockSize, fmt);
 				}
-				else {
+				else
+				{
 					apply_scale(conv, pieces[i], 1, blockSize, fmt);
 				}
 				
