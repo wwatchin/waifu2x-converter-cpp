@@ -990,6 +990,9 @@ static void apply_scale_net
 			input = &imageY;
 			output = &imageSplit[0];
 		}
+		
+		double t0 = getsec();
+		
 		if (nIteration == 0)
 		{
 			if (denoise_level == 0)
@@ -1013,6 +1016,9 @@ static void apply_scale_net
 		}
 		else
 			convert_image_net(impl->scale2_net, *input, *output);
+		
+		double t1 = getsec();
+		conv->flops.filter_sec += t1-t0;
 
 		if (!IS_3CHANNEL(fmt))
 		{
