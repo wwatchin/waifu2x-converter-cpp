@@ -845,6 +845,7 @@ static void apply_denoise_net
 	}
 
 	cv::Mat output_2;
+	double t0 = getsec();
 
 	if (denoise_level == 0)
 	{
@@ -862,9 +863,12 @@ static void apply_denoise_net
 	{
 		convert_image_net(impl->noise3_net, *input, output_2);
 	}
+
+	double t1 = getsec();
+	conv->flops.filter_sec += t1-t0;
 	
 	cv::resize(output_2, *output, lastImageSize, 0, 0, cv::INTER_LINEAR);
-
+		
 	if (! IS_3CHANNEL(fmt))
 	{
 		cv::merge(imageSplit, image);
