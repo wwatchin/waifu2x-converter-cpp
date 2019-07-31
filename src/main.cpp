@@ -705,7 +705,7 @@ int main(int argc, char** argv)
 		"Generate sub folder when recursive directory is enabled.\nSet 1 to enable this. (0 or 1)", false,
 		0, "bool", cmd);
 
-	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) upconv7 model support", cmd, false);
+	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) enable upconv7 model support\nupconv is now limited to single threaded mode.\nuse --force-OpenCL to use GPU instead(could be more slower than CPU)\nthis mode can cause error on your system.", cmd, false);
 
 	TCLAP::SwitchArg cmdQuiet("s", "silent", "Enable silent mode. (same as --log-level 1)", cmd, false);
 	
