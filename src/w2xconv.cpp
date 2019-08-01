@@ -1031,10 +1031,15 @@ static void apply_denoise_net
 	double t0 = getsec();
 	std::vector<cv::Mat> pieces;
 	
-	slice_into_pieces(pieces, image, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize);
+	slice_into_pieces(pieces, image, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize * blockSize);
 	
 	for(int i=0; i<pieces.size(); i++)
 	{
+		if (conv->log_level >= 2)
+		{
+			printf("Proccessing [%d/%zu] block\n", i+1, pieces.size());
+		}
+		
 		if (denoise_level == 0)
 		{
 			convert_image_net(impl->noise0_net, pieces[i], pieces[i]);
@@ -1115,10 +1120,15 @@ static void apply_scale_net
 		double t0 = getsec();
 		std::vector<cv::Mat> pieces;
 		
-		slice_into_pieces(pieces, *input, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize);
+		slice_into_pieces(pieces, *input, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize * blockSize);
 		
 		for(int i=0; i<pieces.size(); i++)
 		{
+			if (conv->log_level >= 2)
+			{
+				printf("Proccessing [%d/%zu] block\n", i+1, pieces.size());
+			}
+			
 			if (nIteration == 0)
 			{
 				if (denoise_level == 0)
