@@ -705,12 +705,8 @@ int main(int argc, char** argv)
 		"Generate sub folder when recursive directory is enabled.\nSet 1 to enable this. (0 or 1)", false,
 		0, "bool", cmd);
 
-	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) enable upconv7 model support\nupconv is now limited to single threaded mode. (will ignore processor and block-size option)\nuse --force-OpenCL to use GPU instead(could be more slower than CPU)\nthis mode can cause error on your system.", cmd, false);
+	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) enable upconv7 model support\nupconv mode does not support processor option. (ex. -j, -p)\nuse --force-OpenCL to use GPU(might be slower than CPU)\nif your PC cannot handle upconv, reduce block-size.", cmd, false);
 
-	TCLAP::ValueArg<int> cmdUpconvSlice("", "upconv-slice",
-		"(experimental) increase value to support bigger image in upconv mode. (default: 2)", false,
-		0, "integer", cmd);
-		
 	TCLAP::SwitchArg cmdQuiet("s", "silent", "Enable silent mode. (same as --log-level 1)", cmd, false);
 	
 	std::vector<int> cmdLogLevelConstraintV;
@@ -760,7 +756,7 @@ int main(int argc, char** argv)
 	TCLAP::SwitchArg cmdDisableGPU("", "disable-gpu", "disable GPU",
 		cmd, false
 	);
-	TCLAP::ValueArg<int> cmdBlockSize("", "block-size", "block size",
+	TCLAP::ValueArg<int> cmdBlockSize("", "block-size", "block size\n (in upconv mode) default is 2000, small block uses less memory and big block is faster.",
 		false, 0, "integer", cmd
 	);
 	TCLAP::ValueArg<int> cmdImgQuality("q", "image-quality", "JPEG & WebP Compression quality (0-101, 0 being smallest size and lowest quality), use 101 for lossless WebP",
@@ -921,7 +917,7 @@ int main(int argc, char** argv)
 		convMode,
 		cmdNRLevel.getValue(),
 		cmdScaleRatio.getValue(),
-		cmdUpconv.getValue()?cmdUpconvSlice.getValue():cmdBlockSize.getValue(),
+		cmdBlockSize.getValue(),
 		converter,
 		imwrite_params,
 		origPath,

@@ -733,6 +733,115 @@ void w2xconv_fini(struct W2XConv *conv)
 }
 
 #ifdef HAVE_OPENCV
+
+#define SLICER_PAD_SIZE 12
+#define OUTPUT_SIZE_MAX 178700000
+#define SLICE_SIZE_DEFAULT_1X OUTPUT_SIZE_MAX
+#define SLICE_SIZE_DEFAULT_2X 44675000
+#define SLICE_SIZE_DEFAULT_UPCONV 4000000
+#define WEBP_LOSSY_OUTPUT_MAX 196000000
+#define WEBP_MAX_WIDTH 16383
+
+void slice_into_pieces(std::vector<cv::Mat> &pieces, const cv::Mat &image, const int slice_size=SLICE_SIZE_DEFAULT_2X)
+{
+	//char name[70]="";	// for imwrite test
+	
+	pieces.push_back(image);
+	
+	while(pieces[0].rows * pieces[0].cols > slice_size)
+	{
+		int r=pieces[0].rows, c=pieces[0].cols;
+		int h_r=r/2, h_c=c/2;
+		
+		// div in 4 and add padding to input.
+		pieces.push_back(pieces[0](cv::Range(0,h_r+SLICER_PAD_SIZE), cv::Range(0,h_c+SLICER_PAD_SIZE)).clone());
+		pieces.push_back(pieces[0](cv::Range(0,h_r+SLICER_PAD_SIZE), cv::Range(h_c-SLICER_PAD_SIZE,c)).clone());
+		pieces.push_back(pieces[0](cv::Range(h_r-SLICER_PAD_SIZE,r), cv::Range(0,h_c+SLICER_PAD_SIZE)).clone());
+		pieces.push_back(pieces[0](cv::Range(h_r-SLICER_PAD_SIZE,r), cv::Range(h_c-SLICER_PAD_SIZE,c)).clone());
+		
+		// delete piece
+		pieces.erase(pieces.begin());
+	}
+	/*
+	for(int i=0; i<pieces.size(); i++)
+	{
+		
+		sprintf(name, "[test] step%d_slice%d_padded.webp", ld, i);
+		
+		cv::Mat test=pieces[i].clone(), testout = cv::Mat(pieces[i].size(), CV_MAKETYPE(src_depth,3));
+		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
+		
+		cv::imwrite(name, testout);
+	}
+	*/
+}
+
+void merge_slices(cv::Mat *image, std::vector<cv::Mat> &pieces, const int max_scale=2)
+{
+	//int j=0; // for imwrite test merge
+	//char name[70]="";	// for imwrite test
+			
+	// combine images
+	while (pieces.size() > 1)
+	{
+		cv::Mat quarter[4], merged[3];
+		int cut = (int) (SLICER_PAD_SIZE * max_scale);
+		
+		//double time_a = getsec(), time_b = 0;
+		
+		quarter[0]=pieces[0](cv::Range(0, pieces[0].rows - cut), cv::Range(0, pieces[0].cols - cut)).clone();
+		quarter[1]=pieces[1](cv::Range(0, pieces[1].rows - cut), cv::Range(cut, pieces[1].cols)).clone();
+		quarter[2]=pieces[2](cv::Range(cut, pieces[2].rows), cv::Range(0, pieces[2].cols - cut)).clone();
+		quarter[3]=pieces[3](cv::Range(cut, pieces[3].rows), cv::Range(cut, pieces[3].cols)).clone();
+		
+		pieces.erase(pieces.begin(), pieces.begin()+4);
+		
+		//printf("merge horizon\n"); 
+		hconcat(quarter[0], quarter[1], merged[0]);
+		hconcat(quarter[2], quarter[3], merged[1]);
+		
+		// free memory
+		quarter[0].release();
+		quarter[1].release();
+		quarter[2].release();
+		quarter[3].release();
+		
+		/*printf("imwriting merged image - horizon\n"); 
+		sprintf(name, "[test] merge_step%d_block0.webp", ld);
+		
+		cv::Mat test=merged[0].clone(), testout = cv::Mat(merged[0].size(), CV_MAKETYPE(src_depth,3));
+		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
+		
+		cv::imwrite(name, testout);
+		
+		printf("imwriting merged image - vertical\n"); 
+		sprintf(name, "[test] merge_step%d_block1.webp", ld);
+		
+		test=merged[1].clone(), testout = cv::Mat(merged[1].size(), CV_MAKETYPE(src_depth,3));
+		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
+		
+		cv::imwrite(name, testout);*/
+		
+		//printf("merge vertical\n"); 
+		vconcat(merged[0], merged[1], merged[2]);
+		
+		//time_b = getsec();
+		//printf("took %f\n", time_b - time_a); 
+		
+		pieces.push_back(merged[2].clone());
+		
+		/*
+		printf("imwriting merged image\n"); 
+		sprintf(name, "[test] merge_step%d_merged.webp", ld);
+		
+		test=merged[2].clone(), testout = cv::Mat(merged[2].size(), CV_MAKETYPE(src_depth,3));
+		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
+		
+		cv::imwrite(name, testout);*/
+	}
+	*image = pieces[0].clone();
+}
+
 static void convert_image_net(cv::dnn::Net& net, cv::Mat& input, cv::Mat& output){
 	int channel_src = input.channels();
 	cv::Mat border = input.clone();
@@ -806,69 +915,6 @@ static void apply_denoise
 
 	output_2.to_cvmat(output);
 
-	if (! IS_3CHANNEL(fmt))
-	{
-		cv::merge(imageSplit, image);
-	}
-}
-
-static void apply_denoise_net
-(
-	struct W2XConv *conv,
-	cv::Mat &image,
-	int denoise_level,
-	int blockSize,
-	enum w2xc::image_format fmt
-)
-{
-	struct W2XConvImpl *impl = conv->impl;
-	ComputeEnv *env = &impl->env;
-
-	std::vector<cv::Mat> imageSplit;
-	cv::Mat *input;
-	cv::Mat *output;
-	cv::Mat imageY;
-	
-	cv::Size lastImageSize = image.size();
-
-	if (IS_3CHANNEL(fmt))
-	{
-		input = &image;
-		output = &image;
-	}
-	else
-	{
-		cv::split(image, imageSplit);
-		imageSplit[0].copyTo(imageY);
-		input = &imageY;
-		output = &imageSplit[0];
-	}
-
-	cv::Mat output_2;
-	double t0 = getsec();
-
-	if (denoise_level == 0)
-	{
-		convert_image_net(impl->noise0_net, *input, output_2);
-	}
-	else if (denoise_level == 1)
-	{
-		convert_image_net(impl->noise1_net, *input, output_2);
-	}
-	else if (denoise_level == 2)
-	{
-		convert_image_net(impl->noise2_net, *input, output_2);
-	}
-	else if (denoise_level == 3)
-	{
-		convert_image_net(impl->noise3_net, *input, output_2);
-	}
-
-	double t1 = getsec();
-	conv->flops.filter_sec += t1-t0;
-	
-	cv::resize(output_2, *output, lastImageSize, 0, 0, cv::INTER_LINEAR);
-		
 	if (! IS_3CHANNEL(fmt))
 	{
 		cv::merge(imageSplit, image);
@@ -949,6 +995,82 @@ static void apply_scale
 	} // 2x scaling : end
 }
 
+static void apply_denoise_net
+(
+	struct W2XConv *conv,
+	cv::Mat &image,
+	int denoise_level,
+	int blockSize,
+	enum w2xc::image_format fmt
+)
+{
+	struct W2XConvImpl *impl = conv->impl;
+	ComputeEnv *env = &impl->env;
+
+	std::vector<cv::Mat> imageSplit;
+	cv::Mat *input;
+	cv::Mat *output;
+	cv::Mat imageY;
+	
+	cv::Size lastImageSize = image.size();
+
+	if (IS_3CHANNEL(fmt))
+	{
+		input = &image;
+		output = &image;
+	}
+	else
+	{
+		cv::split(image, imageSplit);
+		imageSplit[0].copyTo(imageY);
+		input = &imageY;
+		output = &imageSplit[0];
+	}
+	
+	cv::Mat output_2;
+	double t0 = getsec();
+	std::vector<cv::Mat> pieces;
+	
+	slice_into_pieces(pieces, image, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize * blockSize);
+	
+	for(int i=0; i<pieces.size(); i++)
+	{
+		if (conv->log_level >= 2)
+		{
+			printf("Proccessing [%d/%zu] block\n", i+1, pieces.size());
+		}
+		
+		if (denoise_level == 0)
+		{
+			convert_image_net(impl->noise0_net, pieces[i], pieces[i]);
+		}
+		else if (denoise_level == 1)
+		{
+			convert_image_net(impl->noise1_net, pieces[i], pieces[i]);
+		}
+		else if (denoise_level == 2)
+		{
+			convert_image_net(impl->noise2_net, pieces[i], pieces[i]);
+		}
+		else if (denoise_level == 3)
+		{
+			convert_image_net(impl->noise3_net, pieces[i], pieces[i]);
+		}
+	}
+	
+	merge_slices(&output_2, pieces);
+	
+	double t1 = getsec();
+	conv->flops.filter_sec += t1-t0;
+	
+	cv::resize(output_2, *output, lastImageSize, 0, 0, cv::INTER_LINEAR);
+		
+	if (! IS_3CHANNEL(fmt))
+	{
+		cv::merge(imageSplit, image);
+	}
+}
+
 static void apply_scale_net
 (
 	struct W2XConv *conv,
@@ -996,30 +1118,43 @@ static void apply_scale_net
 		}
 		
 		double t0 = getsec();
+		std::vector<cv::Mat> pieces;
 		
-		if (nIteration == 0)
+		slice_into_pieces(pieces, *input, blockSize == 0 ? SLICE_SIZE_DEFAULT_UPCONV : blockSize * blockSize);
+		
+		for(int i=0; i<pieces.size(); i++)
 		{
-			if (denoise_level == 0)
+			if (conv->log_level >= 2)
 			{
-				convert_image_net(impl->noise0_net, *input, *output);
+				printf("Proccessing [%d/%zu] block\n", i+1, pieces.size());
 			}
-			else if (denoise_level == 1)
+			
+			if (nIteration == 0)
 			{
-				convert_image_net(impl->noise1_net, *input, *output);
-			}
-			else if (denoise_level == 2)
-			{
-				convert_image_net(impl->noise2_net, *input, *output);
-			}
-			else if (denoise_level == 3)
-			{
-				convert_image_net(impl->noise3_net, *input, *output);
+				if (denoise_level == 0)
+				{
+					convert_image_net(impl->noise0_net, pieces[i], pieces[i]);
+				}
+				else if (denoise_level == 1)
+				{
+					convert_image_net(impl->noise1_net, pieces[i], pieces[i]);
+				}
+				else if (denoise_level == 2)
+				{
+					convert_image_net(impl->noise2_net, pieces[i], pieces[i]);
+				}
+				else if (denoise_level == 3)
+				{
+					convert_image_net(impl->noise3_net, pieces[i], pieces[i]);
+				}
+				else
+					convert_image_net(impl->scale2_net, pieces[i], pieces[i]);
 			}
 			else
-				convert_image_net(impl->scale2_net, *input, *output);
+				convert_image_net(impl->scale2_net, pieces[i], pieces[i]);
 		}
-		else
-			convert_image_net(impl->scale2_net, *input, *output);
+		
+		merge_slices(output, pieces);
 		
 		double t1 = getsec();
 		conv->flops.filter_sec += t1-t0;
@@ -1789,111 +1924,6 @@ void get_png_background_colour(FILE *png_fp, bool *has_alpha, struct w2xconv_rgb
 	return;
 }
 
-#define SLICER_PAD_SIZE 12
-#define OUTPUT_SIZE_MAX 178700000
-#define WEBP_LOSSY_OUTPUT_MAX 196000000
-#define WEBP_MAX_WIDTH 16383
-
-void slice_into_pieces(std::vector<cv::Mat> &pieces, const cv::Mat &image, const int max_scale=2)
-{
-	//char name[70]="";	// for imwrite test
-	
-	pieces.push_back(image);
-	
-	while(pieces[0].rows * pieces[0].cols > OUTPUT_SIZE_MAX / max_scale / max_scale)
-	{
-		int r=pieces[0].rows, c=pieces[0].cols;
-		int h_r=r/2, h_c=c/2;
-		
-		// div in 4 and add padding to input.
-		pieces.push_back(pieces[0](cv::Range(0,h_r+SLICER_PAD_SIZE), cv::Range(0,h_c+SLICER_PAD_SIZE)).clone());
-		pieces.push_back(pieces[0](cv::Range(0,h_r+SLICER_PAD_SIZE), cv::Range(h_c-SLICER_PAD_SIZE,c)).clone());
-		pieces.push_back(pieces[0](cv::Range(h_r-SLICER_PAD_SIZE,r), cv::Range(0,h_c+SLICER_PAD_SIZE)).clone());
-		pieces.push_back(pieces[0](cv::Range(h_r-SLICER_PAD_SIZE,r), cv::Range(h_c-SLICER_PAD_SIZE,c)).clone());
-		
-		// delete piece
-		pieces.erase(pieces.begin());
-	}
-	/*
-	for(int i=0; i<pieces.size(); i++)
-	{
-		
-		sprintf(name, "[test] step%d_slice%d_padded.webp", ld, i);
-		
-		cv::Mat test=pieces[i].clone(), testout = cv::Mat(pieces[i].size(), CV_MAKETYPE(src_depth,3));
-		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
-		
-		cv::imwrite(name, testout);
-	}
-	*/
-}
-
-void merge_slices(cv::Mat *image, std::vector<cv::Mat> &pieces, const int max_scale=2)
-{
-	//int j=0; // for imwrite test merge
-	//char name[70]="";	// for imwrite test
-			
-	// combine images
-	while (pieces.size() > 1)
-	{
-		cv::Mat quarter[4], merged[3];
-		int cut = (int) (SLICER_PAD_SIZE * max_scale);
-		
-		//double time_a = getsec(), time_b = 0;
-		
-		quarter[0]=pieces[0](cv::Range(0, pieces[0].rows - cut), cv::Range(0, pieces[0].cols - cut)).clone();
-		quarter[1]=pieces[1](cv::Range(0, pieces[1].rows - cut), cv::Range(cut, pieces[1].cols)).clone();
-		quarter[2]=pieces[2](cv::Range(cut, pieces[2].rows), cv::Range(0, pieces[2].cols - cut)).clone();
-		quarter[3]=pieces[3](cv::Range(cut, pieces[3].rows), cv::Range(cut, pieces[3].cols)).clone();
-		
-		pieces.erase(pieces.begin(), pieces.begin()+4);
-		
-		//printf("merge horizon\n"); 
-		hconcat(quarter[0], quarter[1], merged[0]);
-		hconcat(quarter[2], quarter[3], merged[1]);
-		
-		// free memory
-		quarter[0].release();
-		quarter[1].release();
-		quarter[2].release();
-		quarter[3].release();
-		
-		/*printf("imwriting merged image - horizon\n"); 
-		sprintf(name, "[test] merge_step%d_block0.webp", ld);
-		
-		cv::Mat test=merged[0].clone(), testout = cv::Mat(merged[0].size(), CV_MAKETYPE(src_depth,3));
-		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
-		
-		cv::imwrite(name, testout);
-		
-		printf("imwriting merged image - vertical\n"); 
-		sprintf(name, "[test] merge_step%d_block1.webp", ld);
-		
-		test=merged[1].clone(), testout = cv::Mat(merged[1].size(), CV_MAKETYPE(src_depth,3));
-		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
-		
-		cv::imwrite(name, testout);*/
-		
-		//printf("merge vertical\n"); 
-		vconcat(merged[0], merged[1], merged[2]);
-		
-		//time_b = getsec();
-		//printf("took %f\n", time_b - time_a); 
-		
-		pieces.push_back(merged[2].clone());
-		
-		/*
-		printf("imwriting merged image\n"); 
-		sprintf(name, "[test] merge_step%d_merged.webp", ld);
-		
-		test=merged[2].clone(), testout = cv::Mat(merged[2].size(), CV_MAKETYPE(src_depth,3));
-		postproc_rgb2rgb<unsigned char, 255, 2, 0>(&testout, &test);
-		
-		cv::imwrite(name, testout);*/
-	}
-	*image = pieces[0].clone();
-}
-
 void w2xconv_convert_mat
 (
 	struct W2XConv *conv,
@@ -1996,7 +2026,7 @@ void w2xconv_convert_mat
 			printf("\nStep %02d/%02d: Denoising\n", w2x_current_step++, ++w2x_total_steps);
 		}
 			
-		slice_into_pieces(pieces, image, 1);
+		slice_into_pieces(pieces, image, SLICE_SIZE_DEFAULT_1X);
 		
 		for(int i=0; i<pieces.size(); i++)
 		{
@@ -2041,14 +2071,7 @@ void w2xconv_convert_mat
 				printf("\nStep %02d/%02d: 2x Scaling\n", w2x_current_step++, w2x_total_steps);
 			}
 			
-			if(conv->log_level != 999 || blockSize == 0)
-			{
-				slice_into_pieces(pieces, image);
-			}
-			else
-			{
-				slice_into_pieces(pieces, image, blockSize);
-			}
+			slice_into_pieces(pieces, image);
 			
 			for(int i=0; i<pieces.size(); i++)
 			{
@@ -2307,13 +2330,6 @@ int w2xconv_convert_file
 	// comment is for slicer function
 	// output file pixel above 178,756,920px is limit. leave 56,920px for safe conversion. see issue #156
 	// all images that needs slices, it will require 20 px padding to 2 edges (input should w > 40, h > 40).
-	// with max_scale is 2, it only can converts less then (w+20) x (h+20) = 44,675,000 px.
-	// with max_scale is 4, it only can converts less then (w+20) x (h+20) = 11,168,750 px.
-	// with max_scale is 8, it only can converts less then (w+20) x (h+20) = 2,792,187 px.
-	// with max_scale is 16, it only can converts less then (w+20) x (h+20) = 698,046 px.
-	// with max_scale is 32, it only can converts less then (w+20) x (h+20) = 174,511 px.
-	// with max_scale is 64, it only can converts less then (w+20) x (h+20) = 3,627 px.
-	// with max_scale is 128, it only can converts less then (w+20) x (h+20) = 10,906 px.
 	// with max_scale is 256, it only can converts less then (w+20) x (h+20) = 2,726 px.
 	// with max_scale is 512, it only can converts less then (w+20) x (h+20) = 681 px. padding is all most eat everything (pieces are under 6px)
 	// with max_scale is 1024, it only can converts less then (w+20) x (h+20) = 170 px, padding exceed limit (20 x 20 = 400).
