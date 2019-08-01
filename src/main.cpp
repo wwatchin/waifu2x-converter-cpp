@@ -707,10 +707,6 @@ int main(int argc, char** argv)
 
 	TCLAP::SwitchArg cmdUpconv("", "upconv", "(experimental) enable upconv7 model support\nupconv is now limited to single threaded mode. (will ignore processor and block-size option)\nuse --force-OpenCL to use GPU instead(could be more slower than CPU)\nthis mode can cause error on your system.", cmd, false);
 
-	TCLAP::ValueArg<int> cmdUpconvSlice("", "upconv-slice",
-		"(experimental) increase value to support bigger image in upconv mode. (default: 2)", false,
-		0, "integer", cmd);
-		
 	TCLAP::SwitchArg cmdQuiet("s", "silent", "Enable silent mode. (same as --log-level 1)", cmd, false);
 	
 	std::vector<int> cmdLogLevelConstraintV;
@@ -921,7 +917,7 @@ int main(int argc, char** argv)
 		convMode,
 		cmdNRLevel.getValue(),
 		cmdScaleRatio.getValue(),
-		cmdUpconv.getValue()?cmdUpconvSlice.getValue():cmdBlockSize.getValue(),
+		cmdBlockSize.getValue(),
 		converter,
 		imwrite_params,
 		origPath,

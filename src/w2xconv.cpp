@@ -2061,14 +2061,7 @@ void w2xconv_convert_mat
 				printf("\nStep %02d/%02d: 2x Scaling\n", w2x_current_step++, w2x_total_steps);
 			}
 			
-			if(conv->log_level != 999 || blockSize == 0)
-			{
-				slice_into_pieces(pieces, image);
-			}
-			else
-			{
-				slice_into_pieces(pieces, image, blockSize);
-			}
+			slice_into_pieces(pieces, image);
 			
 			for(int i=0; i<pieces.size(); i++)
 			{
